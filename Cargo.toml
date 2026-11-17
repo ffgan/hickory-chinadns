@@ -1,0 +1,22 @@
+[package]
+name = "hickory-chinadns"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"
+panic = "abort"
+
+[dependencies]
+hickory-proto = "0.26"
+libc = "0.2.191"
+lru = "0.16"
+serde_json = "1"
+socket2 = { version = "0.6", default-features = false, features = ["all"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
