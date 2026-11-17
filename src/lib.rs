@@ -8,6 +8,7 @@ mod config;
 mod dns;
 mod domains;
 mod ipset;
+mod reactor;
 mod resolve;
 mod server;
 mod upstream;

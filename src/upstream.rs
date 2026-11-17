@@ -16,11 +16,13 @@ pub async fn query(
     if upstreams.is_empty() {
         return Err(Error::msg("no upstream"));
     }
+    let ring = crate::reactor::handle();
     let mut tasks = tokio::task::JoinSet::new();
     for upstream in upstreams {
         let upstream = upstream.clone();
         let packet = packet.to_vec();
-        tasks.spawn(async move { query_one(&upstream, &packet, via, limit).await });
+        let ring = ring.clone();
+        tasks.spawn(async move { query_one(&upstream, &packet, via, limit, ring).await });
     }
     let mut last = Error::msg("upstream failed");
     while let Some(joined) = tasks.join_next().await {
@@ -41,9 +43,13 @@ async fn query_one(
     packet: &[u8],
     via: Transport,
     limit: Duration,
+    ring: Option<crate::reactor::Handle>,
 ) -> Result<Vec<u8>, Error> {
     let transport = upstream.transport.unwrap_or(via);
     let result = timeout(limit, async {
+        if let Some(ring) = ring {
+            return ring.exchange(transport, upstream.addr, packet, limit).await;
+        }
         match transport {
             Transport::Tcp => query_tcp(upstream.addr, packet).await,
             Transport::Udp => query_udp(upstream.addr, packet).await,

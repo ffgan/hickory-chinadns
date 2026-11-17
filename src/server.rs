@@ -1,3 +1,4 @@
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
 use socket2::{Domain, Socket, Type};
@@ -54,10 +55,15 @@ impl Server {
         let tcp = self.tcp;
         let app_udp = Arc::clone(&app);
         let app_tcp = app;
+        let ring = crate::reactor::handle();
         tokio::try_join!(
             async move {
                 if let Some(socket) = udp {
-                    udp_loop(socket, app_udp).await?;
+                    if let Some(ring) = ring {
+                        udp_uring(socket, app_udp, ring).await?;
+                    } else {
+                        udp_loop(socket, app_udp).await?;
+                    }
                 }
                 Ok(())
             },
@@ -70,6 +76,35 @@ impl Server {
         )
         .map(|_| ())
     }
+}
+
+async fn udp_uring(
+    socket: Arc<UdpSocket>,
+    app: Arc<App>,
+    ring: crate::reactor::Handle,
+) -> Result<(), Error> {
+    let fd = unsafe { libc::dup(socket.as_raw_fd()) };
+    if fd < 0 {
+        return Err(Error::Io {
+            path: "udp".to_string(),
+            source: std::io::Error::last_os_error(),
+        });
+    }
+    drop(socket);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    ring.set_dispatch(tx);
+    ring.listen_udp(fd);
+    while let Some(packet) = rx.recv().await {
+        let app = Arc::clone(&app);
+        let ring = ring.clone();
+        tokio::spawn(async move {
+            let response = app.handle(&packet.bytes, crate::config::Transport::Udp).await;
+            if !response.is_empty() {
+                ring.udp_reply(packet.slot, packet.peer, response);
+            }
+        });
+    }
+    Ok(())
 }
 
 async fn udp_loop(socket: Arc<UdpSocket>, app: Arc<App>) -> Result<(), Error> {
